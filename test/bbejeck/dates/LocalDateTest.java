@@ -15,7 +15,7 @@ import static org.junit.Assert.assertTrue;
  * Date: 2/26/14
  * Time: 9:13 PM
  */
-public class DateTest {
+public class LocalDateTest {
     private LocalDate today = LocalDate.parse("2014-02-27");
 
     @Test
