@@ -1,5 +1,6 @@
 package bbejeck.collector;
 
+import bbejeck.collector.Collectors;
 import com.google.common.collect.Lists;
 import org.junit.Test;
 
@@ -15,7 +16,7 @@ public class CollectorsTest {
     @Test
     public void testOf() throws Exception {
        String expectedValue = "foo1bar2baz3";
-       StringBuilder builder = names.stream().collect(Collectors.of(StringBuilder::new,StringBuilder::append));
+       StringBuilder builder = names.stream().collect(Collectors.of(StringBuilder::new, StringBuilder::append));
        assertThat(builder.toString(),is(expectedValue));
     }
 
