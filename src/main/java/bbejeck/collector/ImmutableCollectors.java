@@ -25,6 +25,10 @@ public class ImmutableCollectors {
         return new ImmutableSetCollector<>();
     }
 
+    public static <E extends Comparable<?>> ImmutableSortedSetCollector<E> ofSortedSet(){
+        return new ImmutableSortedSetCollector<>();
+    }
+
 
     private static class ImmutableSetCollector<T> extends ImmutableCollector {
         @Override
