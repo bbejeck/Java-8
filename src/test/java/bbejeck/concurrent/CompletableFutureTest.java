@@ -4,11 +4,18 @@ import bbejeck.function.throwing.ThrowingSupplier;
 import org.junit.Test;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.function.*;
+import java.util.function.BiConsumer;
+import java.util.function.BinaryOperator;
+import java.util.function.Function;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertThat;
@@ -57,6 +64,56 @@ public class CompletableFutureTest {
         assertThat(results.size(), is(1));
         assertThat(results.contains("add when done"), is(true));
 
+    }
+
+    @Test
+    public void test_then_run_async() throws Exception {
+        Map<String,String> cache = new HashMap<>();
+        cache.put("key","value");
+        CompletableFuture<String> taskUsingCache = CompletableFuture.supplyAsync(simulatedTask(1,cache.get("key")),service);
+        CompletableFuture<Void> cleanUp = taskUsingCache.thenRunAsync(cache::clear,service);
+        cleanUp.get();
+        String theValue = taskUsingCache.get();
+        assertThat(cache.isEmpty(),is(true));
+        assertThat(theValue,is("value"));
+    }
+
+    @Test
+    public void test_run_after_both() throws Exception {
+
+        CompletableFuture<Void> run1 = CompletableFuture.runAsync(() -> {
+            pauseSeconds(2);
+            results.add("first task");
+        }, service);
+
+        CompletableFuture<Void> run2 = CompletableFuture.runAsync(() -> {
+            pauseSeconds(3);
+            results.add("second task");
+        }, service);
+
+        CompletableFuture<Void> finisher = run1.runAfterBothAsync(run2,() -> results.add(results.get(0)+ "&"+results.get(1)),service);
+        pauseSeconds(4);
+        assertThat(finisher.isDone(),is(true));
+        assertThat(results.get(2),is("first task&second task"));
+    }
+
+    @Test
+    public void test_run_after_either() throws Exception {
+
+        CompletableFuture<Void> run1 = CompletableFuture.runAsync(() -> {
+            pauseSeconds(2);
+            results.add("should be first");
+        }, service);
+
+        CompletableFuture<Void> run2 = CompletableFuture.runAsync(() -> {
+            pauseSeconds(3);
+            results.add("should be second");
+        }, service);
+
+        CompletableFuture<Void> finisher = run1.runAfterEitherAsync(run2,() -> results.add(results.get(0).toUpperCase()),service);
+        pauseSeconds(4);
+        assertThat(finisher.isDone(),is(true));
+        assertThat(results.get(1),is("SHOULD BE FIRST"));
     }
 
     @Test
@@ -121,7 +178,7 @@ public class CompletableFutureTest {
     public void test_then_combine_async() throws Exception {
         CompletableFuture<String> firstTask = CompletableFuture.supplyAsync(simulatedTask(3, "combine all"), service);
         CompletableFuture<String> secondTask = CompletableFuture.supplyAsync(simulatedTask(2, "task results"), service);
-        CompletableFuture<String> combined = firstTask.thenCombine(secondTask, (f, s) -> f + " " + s);
+        CompletableFuture<String> combined = firstTask.thenCombineAsync(secondTask, (f, s) -> f + " " + s, service);
 
         assertThat(combined.get(), is("combine all task results"));
     }
@@ -140,15 +197,51 @@ public class CompletableFutureTest {
 
     @Test
     public void test_then_compose() throws Exception {
-        CompletableFuture<List<Integer>> getMultiples = CompletableFuture.supplyAsync(getFirstTenMultiples(13),service);
 
-        Function<List<Integer>,CompletableFuture<Integer>> sumNumbers = multiples -> CompletableFuture.supplyAsync(() -> multiples.stream().mapToInt(Integer::intValue).sum());
+        Function<Integer,Supplier<List<Integer>>> getFirstTenMultiples = num ->
+                ()->Stream.iterate(num, i -> i + num).limit(10).collect(Collectors.toList());
 
-        CompletableFuture<Integer> summedMultiples = getMultiples.thenComposeAsync(sumNumbers,service);
+        Supplier<List<Integer>> multiplesSupplier = getFirstTenMultiples.apply(13);
 
-        assertThat(summedMultiples.get(),is(715));
+
+        CompletableFuture<List<Integer>> getMultiples = CompletableFuture.supplyAsync(multiplesSupplier, service);
+
+        Function<List<Integer>, CompletableFuture<Integer>> sumNumbers = multiples ->
+                CompletableFuture.supplyAsync(() -> multiples.stream().mapToInt(Integer::intValue).sum());
+
+        CompletableFuture<Integer> summedMultiples = getMultiples.thenComposeAsync(sumNumbers, service);
+
+        assertThat(summedMultiples.get(), is(715));
     }
 
+
+    @Test
+    public void test_several_stage_combinations() throws Exception {
+        Function<String,CompletableFuture<String>> upperCaseFunction = s -> CompletableFuture.completedFuture(s.toUpperCase());
+
+        CompletableFuture<String> stage1 = CompletableFuture.completedFuture("the quick ");
+
+        CompletableFuture<String> stage2 = CompletableFuture.completedFuture("brown fox ");
+
+        CompletableFuture<String> stage3 = stage1.thenCombine(stage2,(s1,s2) -> s1+s2);
+
+        CompletableFuture<String> stage4 = stage3.thenCompose(upperCaseFunction);
+
+        CompletableFuture<String> stage5 = CompletableFuture.supplyAsync(simulatedTask(2,"jumped over"));
+
+        CompletableFuture<String> stage6 = stage4.thenCombineAsync(stage5,(s1,s2)-> s1+s2,service);
+
+        CompletableFuture<String> stage6_sub_1_slow = CompletableFuture.supplyAsync(simulatedTask(4,"fell into"));
+
+        CompletableFuture<String> stage7 = stage6.applyToEitherAsync(stage6_sub_1_slow,String::toUpperCase,service);
+
+        CompletableFuture<String> stage8 = CompletableFuture.supplyAsync(simulatedTask(3," the lazy dog"),service);
+
+        CompletableFuture<String> finalStage = stage7.thenCombineAsync(stage8,(s1,s2)-> s1+s2,service);
+
+        assertThat(finalStage.get(),is("THE QUICK BROWN FOX JUMPED OVER the lazy dog"));
+
+    }
 
     private ThrowingSupplier<String> simulatedTask(int numSeconds, String taskResult) {
         return () -> {
@@ -157,19 +250,14 @@ public class CompletableFutureTest {
         };
     }
 
-    private Supplier<List<Integer>> getFirstTenMultiples(int num) {
-        return () -> {
-            List<Integer> tenMultiples = new ArrayList<>(10);
-            for (int i = 1; i <= 10; i++) {
-                tenMultiples.add(num * i);
-            }
-            return tenMultiples;
-        };
-    }
 
 
-    private void pauseSeconds(int seconds) throws Exception {
-        Thread.sleep(seconds * 1000);
+    private void pauseSeconds(int seconds) {
+        try {
+            Thread.sleep(seconds * 1000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
     }
 
 }
