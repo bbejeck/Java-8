@@ -70,7 +70,10 @@ public class CompletableFutureTest {
     public void test_then_run_async() throws Exception {
         Map<String,String> cache = new HashMap<>();
         cache.put("key","value");
-        CompletableFuture<String> taskUsingCache = CompletableFuture.supplyAsync(simulatedTask(1,cache.get("key")),service);
+
+        ThrowingSupplier<String> throwingSupplier = ()-> {Thread.sleep(1000); return cache.get("key");};
+
+        CompletableFuture<String> taskUsingCache = CompletableFuture.supplyAsync(throwingSupplier,service);
         CompletableFuture<Void> cleanUp = taskUsingCache.thenRunAsync(cache::clear,service);
         cleanUp.get();
         String theValue = taskUsingCache.get();
